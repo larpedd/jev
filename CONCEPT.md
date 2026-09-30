@@ -1,10 +1,10 @@
 # Jev — a Luau client for TypeSafe's System One API
 
-`Jev` is a single-file Roblox module that wraps TypeSafe's
-`POST https://api.typesafe.ai/v1/systemone` endpoint. It lets a Roblox experience
-ask a model (`jev-latest`) structured questions about a piece of state and get
-back typed, calibrated answers — probabilities and confidences your own Luau
-code can threshold, branch on, and combine.
+`Jev` is a dependency-free Roblox module — one `require`, no packages — that
+wraps TypeSafe's `POST https://api.typesafe.ai/v1/systemone` endpoint. It lets a
+Roblox experience ask a model (`jev-latest`) structured questions about a piece
+of state and get back typed, calibrated answers — probabilities and confidences
+your own Luau code can threshold, branch on, and combine.
 
 The module name is the model name: TypeSafe's flagship model is **Jev**, and
 `jev-latest` is the alias every example in their docs uses.
@@ -12,42 +12,6 @@ The module name is the model name: TypeSafe's flagship model is **Jev**, and
 This document is the specification. It was written before the module was
 implemented and is meant to be picked up cold by whoever builds it. Read the
 whole thing before writing code; the API surface is already decided.
-
----
-
-## Status
-
-- [ ] **`src/Jev/init.luau` is an empty file.** Nothing here is implemented yet.
-      Every API in [§19](#19-api-reference) is a contract to build, not
-      behaviour to read off working code.
-- **Decisions already made. Do not redesign them without asking:**
-  - Errors are returned as `ok, result | err` tuples. The module never calls
-    `error`, so callers never need `pcall`.
-  - The main surface is a chainable builder: `Jev.new(key):Noul(...):Choice(...):Send(state)`.
-  - Every question and configuration method is **copy-on-write** and returns a
-    new client ([§6.1](#61-every-method-returns-a-new-client)).
-  - In scope: automatic retry + backoff, token/cost accounting, a confidence
-    routing helper, and `client:models()`.
-
-### Build target
-
-| | |
-| --- | --- |
-| File | `src/Jev/init.luau`, a single `ModuleScript` |
-| Dependencies | none beyond `HttpService` — no Wally, no packages |
-| Toolchain | Rojo 7.7.0 via Aftman (`aftman install`) |
-| Served at | `ServerStorage.Modules.Jev` by `default.project.json` |
-| Return value | the class table itself; no `Jev.new()` side effects, no globals |
-| Types | add `---@class` / `---@field` annotations; the design is typed end to end |
-
-### Re-verify before trusting the numbers
-
-Facts below were accurate on **2026-09-30**. TypeSafe states its rate limits and
-pricing are adjusted dynamically and change without notice, and the `jev-latest`
-alias moves on every release. The model IDs, price, rate limits, and context
-budgets in [§10](#10-validation-rules-and-limits),
-[§15](#15-token-usage-and-cost) and [§22](#22-limits-cheat-sheet) are the first
-things to re-check. [§23](#23-sources) has the URLs.
 
 ---
 
@@ -75,7 +39,7 @@ things to re-check. [§23](#23-sources) has the URLs.
 - [22. Limits cheat sheet](#22-limits-cheat-sheet)
 - [23. Sources](#23-sources)
 
-**If you are implementing this:** read [Status](#status), then §6, §7, §8, §11
+**If you are implementing this:** read §6, §7, §8, §11
 and §19, and skip to §12 before writing any HTTP code. §16 through §18 are
 context for *callers* and can come last.
 
@@ -186,11 +150,13 @@ local client = Jev.new("sk-local-dev-only")
 
 ## 3. Installing and requiring the module
 
-The module is a plain `ModuleScript` with no dependencies beyond `HttpService`
-and `tostring`-free `Secret` handling. It is currently served from
-`ServerStorage/Modules/Jev` by this repo's `default.project.json`.
+The module is a folder of `ModuleScript`s with no dependencies beyond
+`HttpService` and `tostring`-free `Secret` handling. `init.luau` is the entry
+point and the only file callers name; the rest are its internals. It is
+currently served from `ServerStorage/Modules/Jev` by this repo's
+`default.project.json`.
 
-Copy `src/Jev/init.luau` into your own Rojo project:
+Copy the whole `src/Jev/` folder into your own Rojo project:
 
 ```json
 {
@@ -419,6 +385,12 @@ client:Noul("is_urgent", "Does this convey urgency or time-sensitivity?", {
     false = "The message is a routine request with no time pressure",
 })
 ```
+
+The keys may be written as the booleans `true` / `false` or as the strings
+`"true"` / `"false"`; both spellings encode to the same JSON keys, so an editor
+that rewrites them changes nothing on the wire. Use one spelling per table —
+describing `true` and `"true"` in the same `criteria` is a `validation` error,
+because they would collide into a single key.
 
 Keep `true` and `false` pointing the same way as the question. A Noul whose
 `true` means "no" performs measurably worse.
@@ -702,7 +674,7 @@ network.
 | Choice `criteria` non-empty | — | `validation` |
 | Choice options | 255 max | `validation` |
 | Score levels | 2 to 10 | `validation` |
-| Noul `criteria` keys | only `true` / `false` | `validation` |
+| Noul `criteria` keys | `true` / `false`, boolean or string, once each | `validation` |
 | Answer ids match question ids | — | `decode` |
 | Answer `type` matches question `type` | — | `decode` |
 
@@ -741,6 +713,27 @@ end
 ```
 
 The module never calls `error`, so you never need `pcall` around it.
+
+The second value is typed `Jev.Result | Jev.Error`. Luau cannot tie a separate
+boolean to a second return value, so `if ok then` does **not** narrow it. Under
+`--!strict` say which arm you are on with one cast:
+
+```luau
+local ok, result = client:Send(state)
+
+if not ok then
+    local err: Jev.Error = result :: Jev.Error
+    warn(err.message)
+    return
+end
+
+local okResult: Jev.Result = result :: Jev.Result
+print(okResult.model, okResult.usage.input_tokens)
+```
+
+The cast cannot be wrong in practice: the module only returns the error table
+alongside `ok == false`, and the result table alongside `ok == true`. The same
+applies to `:models()`, whose second value is `Jev.ModelInfo[] | Jev.Error`.
 
 ### 11.2 The error table
 
@@ -825,20 +818,23 @@ local function trySend(client, state)
     local ok, result = client:Send(state)
 
     if ok then
-        return result
+        return result :: Jev.Result
     end
 
-    if result.kind == "auth" then
+    local err: Jev.Error = result :: Jev.Error
+
+    if err.kind == "auth" then
         -- A bug, not a runtime condition. Alert loudly, once.
-        error(("[jev] API key rejected: %s"):format(result.cause))
+        -- `cause` is optional, so wrap it: it is absent on local failures.
+        error(("[jev] API key rejected: %s"):format(tostring(err.cause)))
     end
 
-    if result.retryable then
+    if err.retryable then
         -- Degrade, don't fail. Route to the static path.
         return nil
     end
 
-    warn(("[jev] %s: %s"):format(result.kind, result.message))
+    warn(("[jev] %s: %s"):format(err.kind, err.message))
     return nil
 end
 ```

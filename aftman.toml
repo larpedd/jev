@@ -5,3 +5,6 @@
 [tools]
 rojo = "rojo-rbx/rojo@7.7.0"
 # rojo = "rojo-rbx/rojo@6.2.0"
+
+# `luau-lsp analyze` is the type checker; see tools/typecheck.ps1.
+luau-lsp = "JohnnyMorganz/luau-lsp@1.70.1"
