@@ -1,0 +1,11 @@
+{
+	"name": "jev",
+	"tree": {
+		"$className": "DataModel",
+		"ServerStorage":{
+			"Modules":{
+				"$path": "src/"
+			}
+		}
+	}
+}
